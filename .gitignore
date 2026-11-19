@@ -1,0 +1,6 @@
+
+__pycache__/
+*.pyc
+isrgrootx1.pem
+.env
+nexo_web_respaldo.py
