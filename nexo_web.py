@@ -338,7 +338,7 @@ class Servidor(BaseHTTPRequestHandler):
                 <div class="panel">
                     <h2>Alumnos registrados</h2>
                     <div class="tabla-contenedor"><table>
-                    <tr><th>ID</th><th>Matrícula</th><th>Nombre</th>
+                    <tr><th>Matrícula</th><th>Nombre</th>
                     <th>Apellido</th><th>Grupo</th>
                 """
                 if admin:
@@ -348,7 +348,6 @@ class Servidor(BaseHTTPRequestHandler):
                 for f in filas:
                     contenido += f"""
                     <tr>
-                        <td>{f['id_alumno']}</td>
                         <td>{escape(str(f['matricula']))}</td>
                         <td>{escape(str(f['nombre']))}</td>
                         <td>{escape(str(f['apellido']))}</td>
@@ -386,7 +385,7 @@ class Servidor(BaseHTTPRequestHandler):
                 <div class="panel">
                     <h2>Libros registrados</h2>
                     <div class="tabla-contenedor"><table>
-                    <tr><th>ID</th><th>Título</th><th>Autor</th>
+                    <tr><th>Título</th><th>Autor</th>
                     <th>Editorial</th><th>Año</th>
                 """
                 if admin:
@@ -396,7 +395,6 @@ class Servidor(BaseHTTPRequestHandler):
                 for f in filas:
                     contenido += f"""
                     <tr>
-                        <td>{f['id_libro']}</td>
                         <td>{escape(str(f['titulo']))}</td>
                         <td>{escape(str(f['autor']))}</td>
                         <td>{escape(str(f['editorial'] or ''))}</td>
@@ -449,16 +447,47 @@ class Servidor(BaseHTTPRequestHandler):
 
             # CONSULTAS: HISTORIAL DE PRESTAMOS Y DEVOLUCIONES
             elif ruta == "/consultas":
-                filas = consultar("""
+                columnas_prestamos = {
+                    columna["Field"]
+                    for columna in consultar("SHOW COLUMNS FROM PRESTAMOS")
+                }
+
+                # Algunas versiones de la tabla no tienen fecha_registro.
+                # Detectamos nombres alternativos y evitamos que la consulta falle.
+                columna_registro = next(
+                    (nombre for nombre in
+                    ("fecha_registro", "fecha_creacion", "created_at", "fecha_alta")
+                    if nombre in columnas_prestamos),
+                    None
+                )
+                expresion_registro = (
+                    f"p.{columna_registro}" if columna_registro
+                    else "NULL"
+                )
+                expresion_devolucion_real = (
+                    "p.fecha_devolucion_real"
+                    if "fecha_devolucion_real" in columnas_prestamos
+                    else "NULL"
+                )
+                expresion_estado = (
+                    "p.estado" if "estado" in columnas_prestamos
+                    else "'Prestado'"
+                )
+
+                filas = consultar(f"""
                     SELECT p.id_prestamo, a.matricula,
-                           CONCAT(a.nombre,' ',a.apellido) AS alumno,
-                           l.titulo, p.fecha_registro, p.fecha_prestamo,
-                           p.fecha_devolucion, p.fecha_devolucion_real, p.estado
+                        CONCAT(a.nombre,' ',a.apellido) AS alumno,
+                        l.titulo,
+                        {expresion_registro} AS fecha_registro,
+                        p.fecha_prestamo, p.fecha_devolucion,
+                        {expresion_devolucion_real} AS fecha_devolucion_real,
+                        {expresion_estado} AS estado
                     FROM PRESTAMOS p
                     INNER JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
                     INNER JOIN LIBROS l ON p.id_libro=l.id_libro
                     ORDER BY p.id_prestamo DESC
                 """)
+
                 contenido = """
                 <div class="panel">
                     <h2>Consultas de préstamos</h2>
@@ -471,15 +500,17 @@ class Servidor(BaseHTTPRequestHandler):
                 if admin:
                     contenido += "<th>Acción</th>"
                 contenido += "</tr>"
+
                 if filas:
                     for f in filas:
+                        fecha_registro = f["fecha_registro"] or "No disponible"
                         fecha_real = f["fecha_devolucion_real"] or "Pendiente"
                         contenido += f"""
                         <tr>
                             <td>{escape(str(f['matricula']))}</td>
                             <td>{escape(str(f['alumno']))}</td>
                             <td>{escape(str(f['titulo']))}</td>
-                            <td>{escape(str(f['fecha_registro']))}</td>
+                            <td>{escape(str(fecha_registro))}</td>
                             <td>{escape(str(f['fecha_prestamo']))}</td>
                             <td>{escape(str(f['fecha_devolucion']))}</td>
                             <td>{escape(str(fecha_real))}</td>
@@ -497,6 +528,7 @@ class Servidor(BaseHTTPRequestHandler):
                 else:
                     columnas = 9 if admin else 8
                     contenido += f'<tr><td colspan="{columnas}">Todavía no hay préstamos registrados.</td></tr>'
+
                 contenido += "</table></div></div>"
                 self.responder(pagina("Consultas", contenido, mensaje, admin))
 
@@ -645,23 +677,48 @@ class Servidor(BaseHTTPRequestHandler):
                     self.redirigir("/prestamos", "Completa las fechas del préstamo y devolución.")
                     return
 
-                ejecutar("""
-                    INSERT INTO PRESTAMOS
-                    (id_alumno,id_libro,fecha_prestamo,fecha_devolucion)
-                    VALUES (%s,%s,%s,%s)
-                """, (
-                    alumno[0]["id_alumno"], id_libro,
-                    fecha_prestamo, fecha_devolucion
-                ))
+                columnas_prestamos = {
+                    columna["Field"]
+                    for columna in consultar("SHOW COLUMNS FROM PRESTAMOS")
+                }
+                if "fecha_registro" in columnas_prestamos:
+                    ejecutar("""
+                        INSERT INTO PRESTAMOS
+                        (id_alumno,id_libro,fecha_registro,fecha_prestamo,fecha_devolucion)
+                        VALUES (%s,%s,NOW(),%s,%s)
+                    """, (
+                        alumno[0]["id_alumno"], id_libro,
+                        fecha_prestamo, fecha_devolucion
+                    ))
+                else:
+                    ejecutar("""
+                        INSERT INTO PRESTAMOS
+                        (id_alumno,id_libro,fecha_prestamo,fecha_devolucion)
+                        VALUES (%s,%s,%s,%s)
+                    """, (
+                        alumno[0]["id_alumno"], id_libro,
+                        fecha_prestamo, fecha_devolucion
+                    ))
                 self.redirigir("/prestamos", "Préstamo registrado correctamente.")
 
             elif ruta.startswith("/prestamos/devolver/"):
                 identificador = int(ruta.split("/")[-1])
-                ejecutar("""
-                    UPDATE PRESTAMOS
-                    SET estado='Devuelto', fecha_devolucion_real=%s
-                    WHERE id_prestamo=%s AND estado='Prestado'
-                """, (date.today().isoformat(), identificador))
+                columnas_prestamos = {
+                    columna["Field"]
+                    for columna in consultar("SHOW COLUMNS FROM PRESTAMOS")
+                }
+                if "fecha_devolucion_real" in columnas_prestamos:
+                    ejecutar("""
+                        UPDATE PRESTAMOS
+                        SET estado='Devuelto', fecha_devolucion_real=%s
+                        WHERE id_prestamo=%s AND estado='Prestado'
+                    """, (date.today().isoformat(), identificador))
+                else:
+                    ejecutar("""
+                        UPDATE PRESTAMOS
+                        SET estado='Devuelto'
+                        WHERE id_prestamo=%s AND estado='Prestado'
+                    """, (identificador,))
                 self.redirigir("/consultas", "Devolución registrada correctamente.")
 
             else:
