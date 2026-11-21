@@ -7,6 +7,13 @@ from http.cookies import SimpleCookie
 import os
 import secrets
 import hmac
+from io import BytesIO
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
 from conexion import conectar
 
@@ -45,6 +52,93 @@ def ejecutar(sql, valores=()):
     finally:
         cursor.close()
         conexion.close()
+
+
+def obtener_consultas():
+    columnas_prestamos = {
+        columna["Field"]
+        for columna in consultar("SHOW COLUMNS FROM PRESTAMOS")
+    }
+    expresion_devolucion_real = (
+        "p.fecha_devolucion_real"
+        if "fecha_devolucion_real" in columnas_prestamos
+        else "NULL"
+    )
+    expresion_estado = (
+        "p.estado" if "estado" in columnas_prestamos else "'Prestado'"
+    )
+    return consultar(f"""
+        SELECT p.id_prestamo, a.matricula,
+            CONCAT(a.nombre,' ',a.apellido) AS alumno,
+            l.titulo,
+            p.fecha_prestamo, p.fecha_devolucion,
+            {expresion_devolucion_real} AS fecha_devolucion_real,
+            {expresion_estado} AS estado
+        FROM PRESTAMOS p
+        INNER JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
+        INNER JOIN LIBROS l ON p.id_libro=l.id_libro
+        ORDER BY p.id_prestamo DESC
+    """)
+
+
+def crear_pdf_consultas(filas):
+    memoria = BytesIO()
+    documento = SimpleDocTemplate(
+        memoria, pagesize=landscape(A4),
+        rightMargin=28, leftMargin=28, topMargin=30, bottomMargin=30
+    )
+    estilos = getSampleStyleSheet()
+    titulo = ParagraphStyle(
+        "TituloNexo", parent=estilos["Title"],
+        textColor=colors.HexColor("#493326"), alignment=TA_CENTER,
+        fontSize=18, spaceAfter=8
+    )
+    subtitulo = ParagraphStyle(
+        "SubtituloNexo", parent=estilos["Normal"],
+        textColor=colors.HexColor("#806b58"), alignment=TA_CENTER,
+        fontSize=9, spaceAfter=16
+    )
+    celda = ParagraphStyle("CeldaNexo", parent=estilos["Normal"], fontSize=7, leading=9)
+    encabezado = ParagraphStyle(
+        "EncabezadoNexo", parent=celda, textColor=colors.white,
+        fontName="Helvetica-Bold"
+    )
+    datos = [[Paragraph(texto, encabezado) for texto in [
+        "Matrícula", "Alumno", "Libro", "Fecha de préstamo",
+        "Devolución prevista", "Devolución real", "Estado"
+    ]]]
+    for fila in filas:
+        valores = [
+            fila.get("matricula", ""), fila.get("alumno", ""),
+            fila.get("titulo", ""), fila.get("fecha_prestamo", ""),
+            fila.get("fecha_devolucion", ""),
+            fila.get("fecha_devolucion_real") or "Pendiente",
+            fila.get("estado", "Prestado")
+        ]
+        datos.append([Paragraph(escape(str(v if v is not None else "")), celda) for v in valores])
+
+    tabla = Table(datos, repeatRows=1, colWidths=[65, 115, 150, 85, 90, 85, 65])
+    tabla.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#74543d")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d8c8b5")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f6f1e9")]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elementos = [
+        Paragraph("NEXO LECTURA", titulo),
+        Paragraph("Historial de préstamos y devoluciones", subtitulo),
+        tabla
+    ]
+    if not filas:
+        elementos.append(Spacer(1, 12))
+        elementos.append(Paragraph("Todavía no hay préstamos registrados.", estilos["Normal"]))
+    documento.build(elementos)
+    return memoria.getvalue()
 
 
 # -------------------- DISEÑO --------------------
@@ -445,35 +539,20 @@ class Servidor(BaseHTTPRequestHandler):
                 )
                 self.responder(pagina("Préstamos", contenido, mensaje, admin))
 
+            # EXPORTAR CONSULTAS A PDF
+            elif ruta == "/consultas/pdf":
+                pdf = crear_pdf_consultas(obtener_consultas())
+                self.send_response(200)
+                self.send_header("Content-Type", "application/pdf")
+                self.send_header("Content-Disposition", 'attachment; filename="Nexo_Lectura_Consultas.pdf"')
+                self.send_header("Content-Length", str(len(pdf)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(pdf)
+
             # CONSULTAS: HISTORIAL DE PRESTAMOS Y DEVOLUCIONES
             elif ruta == "/consultas":
-                columnas_prestamos = {
-                    columna["Field"]
-                    for columna in consultar("SHOW COLUMNS FROM PRESTAMOS")
-                }
-
-                expresion_devolucion_real = (
-                    "p.fecha_devolucion_real"
-                    if "fecha_devolucion_real" in columnas_prestamos
-                    else "NULL"
-                )
-                expresion_estado = (
-                    "p.estado" if "estado" in columnas_prestamos
-                    else "'Prestado'"
-                )
-
-                filas = consultar(f"""
-                    SELECT p.id_prestamo, a.matricula,
-                        CONCAT(a.nombre,' ',a.apellido) AS alumno,
-                        l.titulo,
-                        p.fecha_prestamo, p.fecha_devolucion,
-                        {expresion_devolucion_real} AS fecha_devolucion_real,
-                        {expresion_estado} AS estado
-                    FROM PRESTAMOS p
-                    INNER JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
-                    INNER JOIN LIBROS l ON p.id_libro=l.id_libro
-                    ORDER BY p.id_prestamo DESC
-                """)
+                filas = obtener_consultas()
 
                 contenido = """
                 <div class="panel">
@@ -514,7 +593,15 @@ class Servidor(BaseHTTPRequestHandler):
                     columnas = 8 if admin else 7
                     contenido += f'<tr><td colspan="{columnas}">Todavía no hay préstamos registrados.</td></tr>'
 
-                contenido += "</table></div></div>"
+                contenido += "</table></div>"
+                contenido += """
+                    <div style="text-align:center;margin-top:26px;">
+                        <a href="/consultas/pdf" style="text-decoration:none;">
+                            <button type="button">Exportar consultas en PDF</button>
+                        </a>
+                    </div>
+                </div>
+                """
                 self.responder(pagina("Consultas", contenido, mensaje, admin))
 
             else:
