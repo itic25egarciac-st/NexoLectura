@@ -452,18 +452,6 @@ class Servidor(BaseHTTPRequestHandler):
                     for columna in consultar("SHOW COLUMNS FROM PRESTAMOS")
                 }
 
-                # Algunas versiones de la tabla no tienen fecha_registro.
-                # Detectamos nombres alternativos y evitamos que la consulta falle.
-                columna_registro = next(
-                    (nombre for nombre in
-                    ("fecha_registro", "fecha_creacion", "created_at", "fecha_alta")
-                    if nombre in columnas_prestamos),
-                    None
-                )
-                expresion_registro = (
-                    f"p.{columna_registro}" if columna_registro
-                    else "NULL"
-                )
                 expresion_devolucion_real = (
                     "p.fecha_devolucion_real"
                     if "fecha_devolucion_real" in columnas_prestamos
@@ -476,12 +464,11 @@ class Servidor(BaseHTTPRequestHandler):
 
                 filas = consultar(f"""
                     SELECT p.id_prestamo, a.matricula,
-                        CONCAT(a.nombre,' ',a.apellido) AS alumno,
-                        l.titulo,
-                        {expresion_registro} AS fecha_registro,
-                        p.fecha_prestamo, p.fecha_devolucion,
-                        {expresion_devolucion_real} AS fecha_devolucion_real,
-                        {expresion_estado} AS estado
+                           CONCAT(a.nombre,' ',a.apellido) AS alumno,
+                           l.titulo,
+                           p.fecha_prestamo, p.fecha_devolucion,
+                           {expresion_devolucion_real} AS fecha_devolucion_real,
+                           {expresion_estado} AS estado
                     FROM PRESTAMOS p
                     INNER JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
                     INNER JOIN LIBROS l ON p.id_libro=l.id_libro
@@ -494,7 +481,7 @@ class Servidor(BaseHTTPRequestHandler):
                     <p class="subtitulo">Historial de alumnos, libros prestados y estado de devolución.</p>
                     <div class="tabla-contenedor"><table>
                     <tr><th>Matrícula</th><th>Alumno</th><th>Libro</th>
-                    <th>Fecha de registro</th><th>Fecha de préstamo</th>
+                    <th>Fecha de préstamo</th>
                     <th>Devolución prevista</th><th>Devolución real</th><th>Estado</th>
                 """
                 if admin:
@@ -503,14 +490,12 @@ class Servidor(BaseHTTPRequestHandler):
 
                 if filas:
                     for f in filas:
-                        fecha_registro = f["fecha_registro"] or "No disponible"
                         fecha_real = f["fecha_devolucion_real"] or "Pendiente"
                         contenido += f"""
                         <tr>
                             <td>{escape(str(f['matricula']))}</td>
                             <td>{escape(str(f['alumno']))}</td>
                             <td>{escape(str(f['titulo']))}</td>
-                            <td>{escape(str(fecha_registro))}</td>
                             <td>{escape(str(f['fecha_prestamo']))}</td>
                             <td>{escape(str(f['fecha_devolucion']))}</td>
                             <td>{escape(str(fecha_real))}</td>
@@ -526,7 +511,7 @@ class Servidor(BaseHTTPRequestHandler):
                             contenido += f"<td>{accion}</td>"
                         contenido += "</tr>"
                 else:
-                    columnas = 9 if admin else 8
+                    columnas = 8 if admin else 7
                     contenido += f'<tr><td colspan="{columnas}">Todavía no hay préstamos registrados.</td></tr>'
 
                 contenido += "</table></div></div>"
