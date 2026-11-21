@@ -1,3 +1,4 @@
+
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 from datetime import date
@@ -450,9 +451,9 @@ class Servidor(BaseHTTPRequestHandler):
             elif ruta == "/consultas":
                 filas = consultar("""
                     SELECT p.id_prestamo, a.matricula,
-                        CONCAT(a.nombre,' ',a.apellido) AS alumno,
-                        l.titulo, p.fecha_prestamo, p.fecha_devolucion,
-                        p.fecha_devolucion_real, p.estado
+                           CONCAT(a.nombre,' ',a.apellido) AS alumno,
+                           l.titulo, p.fecha_registro, p.fecha_prestamo,
+                           p.fecha_devolucion, p.fecha_devolucion_real, p.estado
                     FROM PRESTAMOS p
                     INNER JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
                     INNER JOIN LIBROS l ON p.id_libro=l.id_libro
@@ -464,8 +465,8 @@ class Servidor(BaseHTTPRequestHandler):
                     <p class="subtitulo">Historial de alumnos, libros prestados y estado de devolución.</p>
                     <div class="tabla-contenedor"><table>
                     <tr><th>Matrícula</th><th>Alumno</th><th>Libro</th>
-                    <th>Fecha de préstamo</th><th>Devolución prevista</th>
-                    <th>Devolución real</th><th>Estado</th>
+                    <th>Fecha de registro</th><th>Fecha de préstamo</th>
+                    <th>Devolución prevista</th><th>Devolución real</th><th>Estado</th>
                 """
                 if admin:
                     contenido += "<th>Acción</th>"
@@ -478,6 +479,7 @@ class Servidor(BaseHTTPRequestHandler):
                             <td>{escape(str(f['matricula']))}</td>
                             <td>{escape(str(f['alumno']))}</td>
                             <td>{escape(str(f['titulo']))}</td>
+                            <td>{escape(str(f['fecha_registro']))}</td>
                             <td>{escape(str(f['fecha_prestamo']))}</td>
                             <td>{escape(str(f['fecha_devolucion']))}</td>
                             <td>{escape(str(fecha_real))}</td>
@@ -493,7 +495,7 @@ class Servidor(BaseHTTPRequestHandler):
                             contenido += f"<td>{accion}</td>"
                         contenido += "</tr>"
                 else:
-                    columnas = 8 if admin else 7
+                    columnas = 9 if admin else 8
                     contenido += f'<tr><td colspan="{columnas}">Todavía no hay préstamos registrados.</td></tr>'
                 contenido += "</table></div></div>"
                 self.responder(pagina("Consultas", contenido, mensaje, admin))
