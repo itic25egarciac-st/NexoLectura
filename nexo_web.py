@@ -464,11 +464,11 @@ class Servidor(BaseHTTPRequestHandler):
 
                 filas = consultar(f"""
                     SELECT p.id_prestamo, a.matricula,
-                           CONCAT(a.nombre,' ',a.apellido) AS alumno,
-                           l.titulo,
-                           p.fecha_prestamo, p.fecha_devolucion,
-                           {expresion_devolucion_real} AS fecha_devolucion_real,
-                           {expresion_estado} AS estado
+                        CONCAT(a.nombre,' ',a.apellido) AS alumno,
+                        l.titulo,
+                        p.fecha_prestamo, p.fecha_devolucion,
+                        {expresion_devolucion_real} AS fecha_devolucion_real,
+                        {expresion_estado} AS estado
                     FROM PRESTAMOS p
                     INNER JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
                     INNER JOIN LIBROS l ON p.id_libro=l.id_libro
