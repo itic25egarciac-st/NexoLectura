@@ -1,4 +1,3 @@
-
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 from datetime import date
@@ -199,6 +198,7 @@ footer {{
     <a href="/alumnos">Alumnos</a>
     <a href="/libros">Libros</a>
     <a href="/prestamos">Préstamos</a>
+    <a href="/consultas">Consultas</a>
     {acceso}
 </nav>
 <main>
@@ -411,82 +411,92 @@ class Servidor(BaseHTTPRequestHandler):
                 contenido += "</table></div></div>"
                 self.responder(pagina("Libros", contenido, mensaje, admin))
 
-            # PRESTAMOS
+            # PRESTAMOS: SOLO REGISTRO DE NUEVOS PRESTAMOS
             elif ruta == "/prestamos":
                 libros = consultar("SELECT id_libro,titulo FROM LIBROS ORDER BY titulo")
-                filas = consultar("""
-                    SELECT p.*, a.matricula,
-                        CONCAT(a.nombre,' ',a.apellido) AS alumno,
-                        l.titulo
-                    FROM PRESTAMOS p
-                    JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
-                    JOIN LIBROS l ON p.id_libro=l.id_libro
-                    ORDER BY p.id_prestamo DESC
-                """)
-
-                contenido = ""
+                contenido = """
+                <div class="panel">
+                    <h2>Registrar préstamo</h2>
+                    <p class="subtitulo">Escribe la matrícula del alumno y selecciona el libro que llevará.</p>
+                """
                 if admin:
-                    contenido += """
-                    <div class="panel">
-                        <h2>Registrar préstamo</h2>
-                        <p class="subtitulo">Escribe la matrícula del alumno y selecciona el libro.</p>
-                        <form method="POST" action="/prestamos">
-                        <label for="matricula">Matrícula del alumno</label>
-                        <input id="matricula" name="matricula" type="text"
-                            placeholder="Escribe la matrícula exactamente"
-                            autocomplete="off" required>
-                        <label for="id_libro">Libro</label>
-                        <select id="id_libro" name="id_libro" required>
-                    """
+                    contenido += '<form method="POST" action="/prestamos">'
+                    contenido += campo("matricula", "Matrícula del alumno")
+                    contenido += '<label for="id_libro">Libro</label><select id="id_libro" name="id_libro" required>'
                     if libros:
-                        for l in libros:
+                        contenido += '<option value="">Selecciona un libro</option>'
+                        for libro in libros:
                             contenido += (
-                                f'<option value="{l["id_libro"]}">'
-                                f'{escape(str(l["titulo"]))}</option>'
+                                f'<option value="{libro["id_libro"]}">'
+                                f'{escape(str(libro["titulo"]))}</option>'
                             )
                     else:
                         contenido += '<option value="">No hay libros registrados</option>'
-                    contenido += "</select>"
+                    contenido += '</select>'
                     contenido += campo("fecha_prestamo", "Fecha de préstamo", "date")
                     contenido += campo("fecha_devolucion", "Fecha prevista de devolución", "date")
-                    if libros:
-                        contenido += '<br><button type="submit">Registrar préstamo</button>'
-                    else:
-                        contenido += '<p class="subtitulo">Primero registra al menos un libro.</p>'
-                    contenido += "</form></div>"
+                    contenido += '<br><button type="submit">Registrar préstamo</button></form>'
+                else:
+                    contenido += '<p>Inicia sesión como administradora para registrar préstamos.</p>'
+                contenido += "</div>"
+                contenido += (
+                    '<div class="panel"><h2>Historial de préstamos</h2>'
+                    '<p class="subtitulo">Consulta el historial completo en el apartado '
+                    '<a href="/consultas">Consultas</a>.</p></div>'
+                )
+                self.responder(pagina("Préstamos", contenido, mensaje, admin))
 
-                contenido += """
+            # CONSULTAS: HISTORIAL DE PRESTAMOS Y DEVOLUCIONES
+            elif ruta == "/consultas":
+                filas = consultar("""
+                    SELECT p.id_prestamo, a.matricula,
+                        CONCAT(a.nombre,' ',a.apellido) AS alumno,
+                        l.titulo, p.fecha_prestamo, p.fecha_devolucion,
+                        p.fecha_devolucion_real, p.estado
+                    FROM PRESTAMOS p
+                    INNER JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
+                    INNER JOIN LIBROS l ON p.id_libro=l.id_libro
+                    ORDER BY p.id_prestamo DESC
+                """)
+                contenido = """
                 <div class="panel">
-                    <h2>Préstamos registrados</h2>
+                    <h2>Consultas de préstamos</h2>
+                    <p class="subtitulo">Historial de alumnos, libros prestados y estado de devolución.</p>
                     <div class="tabla-contenedor"><table>
                     <tr><th>Matrícula</th><th>Alumno</th><th>Libro</th>
-                    <th>Fecha préstamo</th><th>Estado</th>
+                    <th>Fecha de préstamo</th><th>Devolución prevista</th>
+                    <th>Devolución real</th><th>Estado</th>
                 """
                 if admin:
                     contenido += "<th>Acción</th>"
                 contenido += "</tr>"
-
-                for f in filas:
-                    contenido += f"""
-                    <tr>
-                        <td>{escape(str(f['matricula']))}</td>
-                        <td>{escape(str(f['alumno']))}</td>
-                        <td>{escape(str(f['titulo']))}</td>
-                        <td>{escape(str(f['fecha_prestamo']))}</td>
-                        <td>{escape(str(f['estado']))}</td>
-                    """
-                    if admin:
-                        accion = ""
-                        if f["estado"] == "Prestado":
-                            accion = (
-                                f'<form method="POST" action="/prestamos/devolver/{f["id_prestamo"]}">'
-                                '<button>Registrar devolución</button></form>'
-                            )
-                        contenido += f"<td>{accion}</td>"
-                    contenido += "</tr>"
-
+                if filas:
+                    for f in filas:
+                        fecha_real = f["fecha_devolucion_real"] or "Pendiente"
+                        contenido += f"""
+                        <tr>
+                            <td>{escape(str(f['matricula']))}</td>
+                            <td>{escape(str(f['alumno']))}</td>
+                            <td>{escape(str(f['titulo']))}</td>
+                            <td>{escape(str(f['fecha_prestamo']))}</td>
+                            <td>{escape(str(f['fecha_devolucion']))}</td>
+                            <td>{escape(str(fecha_real))}</td>
+                            <td>{escape(str(f['estado']))}</td>
+                        """
+                        if admin:
+                            accion = ""
+                            if f["estado"] == "Prestado":
+                                accion = (
+                                    f'<form method="POST" action="/prestamos/devolver/{f["id_prestamo"]}">'
+                                    '<button>Registrar devolución</button></form>'
+                                )
+                            contenido += f"<td>{accion}</td>"
+                        contenido += "</tr>"
+                else:
+                    columnas = 8 if admin else 7
+                    contenido += f'<tr><td colspan="{columnas}">Todavía no hay préstamos registrados.</td></tr>'
                 contenido += "</table></div></div>"
-                self.responder(pagina("Préstamos", contenido, mensaje, admin))
+                self.responder(pagina("Consultas", contenido, mensaje, admin))
 
             else:
                 self.responder(
@@ -586,15 +596,18 @@ class Servidor(BaseHTTPRequestHandler):
 
             elif ruta == "/prestamos":
                 matricula = valor("matricula")
+                id_libro = valor("id_libro")
+                fecha_prestamo = valor("fecha_prestamo")
+                fecha_devolucion = valor("fecha_devolucion")
+
                 if not matricula:
                     self.redirigir("/prestamos", "Escribe la matrícula del alumno.")
                     return
 
                 alumno = consultar(
-                    "SELECT id_alumno, nombre, apellido FROM ALUMNOS WHERE matricula=%s",
+                    "SELECT id_alumno FROM ALUMNOS WHERE matricula=%s",
                     (matricula,)
                 )
-
                 if not alumno:
                     self.redirigir(
                         "/prestamos",
@@ -602,15 +615,32 @@ class Servidor(BaseHTTPRequestHandler):
                     )
                     return
 
-                id_alumno = alumno[0]["id_alumno"]
-                id_libro = valor("id_libro")
+                if not id_libro:
+                    self.redirigir("/prestamos", "Selecciona un libro.")
+                    return
 
                 libro = consultar(
                     "SELECT id_libro FROM LIBROS WHERE id_libro=%s",
                     (id_libro,)
                 )
                 if not libro:
-                    self.redirigir("/prestamos", "Selecciona un libro válido.")
+                    self.redirigir("/prestamos", "El libro seleccionado no existe.")
+                    return
+
+                ocupado = consultar(
+                    "SELECT id_prestamo FROM PRESTAMOS "
+                    "WHERE id_libro=%s AND estado='Prestado' LIMIT 1",
+                    (id_libro,)
+                )
+                if ocupado:
+                    self.redirigir(
+                        "/prestamos",
+                        "Este libro ya está prestado. No se puede registrar otro préstamo hasta que sea devuelto."
+                    )
+                    return
+
+                if not fecha_prestamo or not fecha_devolucion:
+                    self.redirigir("/prestamos", "Completa las fechas del préstamo y devolución.")
                     return
 
                 ejecutar("""
@@ -618,14 +648,10 @@ class Servidor(BaseHTTPRequestHandler):
                     (id_alumno,id_libro,fecha_prestamo,fecha_devolucion)
                     VALUES (%s,%s,%s,%s)
                 """, (
-                    id_alumno, id_libro,
-                    valor("fecha_prestamo"), valor("fecha_devolucion")
+                    alumno[0]["id_alumno"], id_libro,
+                    fecha_prestamo, fecha_devolucion
                 ))
-                nombre_alumno = alumno[0]["nombre"] + " " + alumno[0]["apellido"]
-                self.redirigir(
-                    "/prestamos",
-                    "Préstamo registrado correctamente para " + nombre_alumno + "."
-                )
+                self.redirigir("/prestamos", "Préstamo registrado correctamente.")
 
             elif ruta.startswith("/prestamos/devolver/"):
                 identificador = int(ruta.split("/")[-1])
@@ -634,7 +660,7 @@ class Servidor(BaseHTTPRequestHandler):
                     SET estado='Devuelto', fecha_devolucion_real=%s
                     WHERE id_prestamo=%s AND estado='Prestado'
                 """, (date.today().isoformat(), identificador))
-                self.redirigir("/prestamos", "Devolución registrada.")
+                self.redirigir("/consultas", "Devolución registrada correctamente.")
 
             else:
                 self.redirigir("/", "Operación no encontrada.")
