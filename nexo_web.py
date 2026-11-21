@@ -413,12 +413,11 @@ class Servidor(BaseHTTPRequestHandler):
 
             # PRESTAMOS
             elif ruta == "/prestamos":
-                alumnos = consultar(
-                    "SELECT id_alumno,nombre,apellido FROM ALUMNOS ORDER BY nombre"
-                )
                 libros = consultar("SELECT id_libro,titulo FROM LIBROS ORDER BY titulo")
                 filas = consultar("""
-                    SELECT p.*, CONCAT(a.nombre,' ',a.apellido) AS alumno, l.titulo
+                    SELECT p.*, a.matricula,
+                        CONCAT(a.nombre,' ',a.apellido) AS alumno,
+                        l.titulo
                     FROM PRESTAMOS p
                     JOIN ALUMNOS a ON p.id_alumno=a.id_alumno
                     JOIN LIBROS l ON p.id_libro=l.id_libro
@@ -430,31 +429,37 @@ class Servidor(BaseHTTPRequestHandler):
                     contenido += """
                     <div class="panel">
                         <h2>Registrar préstamo</h2>
-                        <p class="subtitulo">Selecciona al alumno y el libro que llevará.</p>
+                        <p class="subtitulo">Escribe la matrícula del alumno y selecciona el libro.</p>
                         <form method="POST" action="/prestamos">
-                        <label for="id_alumno">Alumno</label>
-                        <select id="id_alumno" name="id_alumno" required>
+                        <label for="matricula">Matrícula del alumno</label>
+                        <input id="matricula" name="matricula" type="text"
+                            placeholder="Escribe la matrícula exactamente"
+                            autocomplete="off" required>
+                        <label for="id_libro">Libro</label>
+                        <select id="id_libro" name="id_libro" required>
                     """
-                    for a in alumnos:
-                        contenido += (
-                            f'<option value="{a["id_alumno"]}">'
-                            f'{escape(str(a["nombre"]))} {escape(str(a["apellido"]))}</option>'
-                        )
-                    contenido += '</select><label for="id_libro">Libro</label><select id="id_libro" name="id_libro" required>'
-                    for l in libros:
-                        contenido += (
-                            f'<option value="{l["id_libro"]}">{escape(str(l["titulo"]))}</option>'
-                        )
+                    if libros:
+                        for l in libros:
+                            contenido += (
+                                f'<option value="{l["id_libro"]}">'
+                                f'{escape(str(l["titulo"]))}</option>'
+                            )
+                    else:
+                        contenido += '<option value="">No hay libros registrados</option>'
                     contenido += "</select>"
                     contenido += campo("fecha_prestamo", "Fecha de préstamo", "date")
                     contenido += campo("fecha_devolucion", "Fecha prevista de devolución", "date")
-                    contenido += '<br><button type="submit">Registrar préstamo</button></form></div>'
+                    if libros:
+                        contenido += '<br><button type="submit">Registrar préstamo</button>'
+                    else:
+                        contenido += '<p class="subtitulo">Primero registra al menos un libro.</p>'
+                    contenido += "</form></div>"
 
                 contenido += """
                 <div class="panel">
                     <h2>Préstamos registrados</h2>
                     <div class="tabla-contenedor"><table>
-                    <tr><th>ID</th><th>Alumno</th><th>Libro</th>
+                    <tr><th>Matrícula</th><th>Alumno</th><th>Libro</th>
                     <th>Fecha préstamo</th><th>Estado</th>
                 """
                 if admin:
@@ -464,7 +469,7 @@ class Servidor(BaseHTTPRequestHandler):
                 for f in filas:
                     contenido += f"""
                     <tr>
-                        <td>{f['id_prestamo']}</td>
+                        <td>{escape(str(f['matricula']))}</td>
                         <td>{escape(str(f['alumno']))}</td>
                         <td>{escape(str(f['titulo']))}</td>
                         <td>{escape(str(f['fecha_prestamo']))}</td>
@@ -580,15 +585,47 @@ class Servidor(BaseHTTPRequestHandler):
                 self.redirigir("/libros", "Libro eliminado.")
 
             elif ruta == "/prestamos":
+                matricula = valor("matricula")
+                if not matricula:
+                    self.redirigir("/prestamos", "Escribe la matrícula del alumno.")
+                    return
+
+                alumno = consultar(
+                    "SELECT id_alumno, nombre, apellido FROM ALUMNOS WHERE matricula=%s",
+                    (matricula,)
+                )
+
+                if not alumno:
+                    self.redirigir(
+                        "/prestamos",
+                        "Matrícula no encontrada. Verifica el número o registra primero al alumno."
+                    )
+                    return
+
+                id_alumno = alumno[0]["id_alumno"]
+                id_libro = valor("id_libro")
+
+                libro = consultar(
+                    "SELECT id_libro FROM LIBROS WHERE id_libro=%s",
+                    (id_libro,)
+                )
+                if not libro:
+                    self.redirigir("/prestamos", "Selecciona un libro válido.")
+                    return
+
                 ejecutar("""
                     INSERT INTO PRESTAMOS
                     (id_alumno,id_libro,fecha_prestamo,fecha_devolucion)
                     VALUES (%s,%s,%s,%s)
                 """, (
-                    valor("id_alumno"), valor("id_libro"),
+                    id_alumno, id_libro,
                     valor("fecha_prestamo"), valor("fecha_devolucion")
                 ))
-                self.redirigir("/prestamos", "Préstamo registrado correctamente.")
+                nombre_alumno = alumno[0]["nombre"] + " " + alumno[0]["apellido"]
+                self.redirigir(
+                    "/prestamos",
+                    "Préstamo registrado correctamente para " + nombre_alumno + "."
+                )
 
             elif ruta.startswith("/prestamos/devolver/"):
                 identificador = int(ruta.split("/")[-1])
